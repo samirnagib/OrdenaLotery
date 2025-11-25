@@ -1,0 +1,407 @@
+import os
+import sqlite3
+import pandas as pd
+from tabulate import tabulate
+from datetime import datetime
+
+
+# Função para limpar a tela
+def limpar_tela():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
+# Conectar ao banco SQLite
+conn = sqlite3.connect("dbMegaSena.db")
+cursor = conn.cursor()
+# Criar tabela (se não existir)
+cursor.execute("""
+               CREATE TABLE IF NOT EXISTS conclt
+               (
+                   concurso
+                   INTEGER
+                   PRIMARY
+                   KEY,
+                   dtsorteio
+                   TEXT,
+                   d1
+                   INTEGER,
+                   d2
+                   INTEGER,
+                   d3
+                   INTEGER,
+                   d4
+                   INTEGER,
+                   d5
+                   INTEGER,
+                   d6
+                   INTEGER,
+                   qtganhador
+                   INTEGER,
+                   rateio6
+                   REAL
+               )
+               """)
+conn.commit()
+
+
+# <--------->
+# Função para inserir vários registros
+def inserir_registros():
+    limpar_tela()
+    while True:
+        try:
+            concurso = int(input("Digite o número do concurso (ID): "))
+        except ValueError:
+            print("ID inválido. Digite um número inteiro.")
+            continue
+
+        data = input("Digite a data (dd/mm/aaaa): ").strip()
+
+        valores = []
+        for i in range(1, 7):
+            while True:
+                try:
+                    valor = int(input(f"Digite o valor de D{i} (inteiro): "))
+                    valores.append(valor)
+                    break
+                except ValueError:
+                    print("Valor inválido. Digite um número inteiro.")
+
+        # Opcional: quantidade de ganhadores e rateio
+        qtganhador = None
+        rateio6 = None
+        entrada = input("Deseja informar quantos ganharores e o rateio agora? (s/n): ").lower()
+        if entrada == "s":
+            try:
+                qtganhador = int(input("Digite qt ganhador (inteiro): "))
+            except ValueError:
+                qtganhador = None
+            try:
+                rateio6 = float(input("Digite O Valor do Rateio (ex: 1234.56): ").replace(",", "."))
+            except ValueError:
+                rateio6 = None
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO conclt (
+                concurso, dtsorteio,
+                d1, d2, d3, d4, d5,
+                d6, qtganhador, rateio6
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
+        """, (concurso, data, *valores, qtganhador, rateio6))
+        conn.commit()
+        print("✅ Registro inserido com sucesso!\n")
+
+        continuar = input("Deseja cadastrar outro registro? (s/n): ").lower()
+        if continuar != "s":
+            break
+
+
+# Função para listar todos os registros
+#def menu_consulta():
+#    print("passou aqui")
+def listar_registros():
+    def paginar_dataframe(df, pagina_tamanho=10):
+        total_registros = len(df)
+        pagina_atual = 0
+        total_paginas = (total_registros + pagina_tamanho - 1) // pagina_tamanho
+        print("passou aqui 2")
+        while True:
+            limpar_tela()
+            inicio = pagina_atual * pagina_tamanho
+            fim = inicio + pagina_tamanho
+            print(f"\n--- REGISTROS {inicio + 1} a {min(fim, total_registros)} de {total_registros} ---")
+
+            # print(df.iloc[inicio:fim])
+            print(tabulate(df.iloc[inicio:fim], headers="keys", tablefmt="grid"))
+            print(f"\nPágina {pagina_atual + 1} de {total_paginas}")
+            print("n - próxima | p - anterior | q - sair")
+
+            comando = input("Escolha: ").strip().lower()
+            if comando == 'n' and pagina_atual < total_paginas - 1:
+                pagina_atual += 1
+            elif comando == 'p' and pagina_atual > 0:
+                pagina_atual -= 1
+            elif comando == 'q':
+                break
+
+    colunas = ["concurso", "dtsorteio"] + [f"d{i}" for i in range(1, 7)] + ["qtganhador", "rateio6"]
+
+    while True:
+        limpar_tela()
+        print("=== MENU DE CONSULTA ===")
+        print("1 - Listar todos os registros")
+        print("2 - Filtrar por intervalo de concursos")
+        print("3 - Filtrar por intervalo de datas")
+        print("4 - Mostrar os últimos N registros")
+
+        print("5 - Sair")
+        opcao = input("Escolha uma opção: ").strip()
+
+        if opcao == '5':
+            break
+
+        cursor.execute("SELECT * FROM conclt")
+        rows = cursor.fetchall()
+        df = pd.DataFrame(rows, columns=colunas)
+
+        # Conversões
+        int_cols = ["concurso", "qtganhador"] + [f"d{i}" for i in range(1, 7)]
+        for col in int_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+        df["dtsorteio"] = pd.to_datetime(df["dtsorteio"], errors="coerce")
+
+        if "rateio6" in df.columns:
+            df["rateio6"] = pd.to_numeric(df["rateio6"], errors="coerce").astype(float)
+
+        if opcao == '1':
+            paginar_dataframe(df)
+
+        elif opcao == '2':
+            try:
+                ini = int(input("Concurso inicial: "))
+                fim = int(input("Concurso final: "))
+                filtrado = df[(df["concurso"] >= ini) & (df["concurso"] <= fim)]
+                paginar_dataframe(filtrado)
+            except ValueError:
+                print("Valores inválidos. Pressione Enter para continuar.")
+                input()
+
+        elif opcao == '3':
+            try:
+                ini = input("Data inicial (AAAA-MM-DD): ")
+                fim = input("Data final (AAAA-MM-DD): ")
+                ini_dt = pd.to_datetime(ini)
+                fim_dt = pd.to_datetime(fim)
+                filtrado = df[(df["dtsorteio"] >= ini_dt) & (df["dtsorteio"] <= fim_dt)]
+                paginar_dataframe(filtrado)
+            except Exception:
+                print("Datas inválidas. Pressione Enter para continuar.")
+                input()
+
+        elif opcao == '4':
+            try:
+                n = int(input("Quantos registros recentes deseja ver? "))
+                filtrado = df.sort_values(by="concurso", ascending=False).head(n)
+                paginar_dataframe(filtrado)
+            except ValueError:
+                print("Valor inválido. Pressione Enter para continuar.")
+                input()
+
+# Função para buscar registros e ordenar cada coluna separadamente + ranking
+def buscar_registros():
+    while True:
+        limpar_tela()
+        qtd = int(input("Digite a quantidade de sorteios que deseja ver: "))
+        # Buscar os últimos sorteios de acordo com a quantidade
+        cursor.execute(f"""
+                SELECT concurso, dtsorteio, d1, d2, d3, d4, d5,
+                       d6
+                FROM conclt
+                ORDER BY concurso DESC
+                LIMIT {qtd}
+            """)
+        rows = cursor.fetchall()
+
+        if not rows:
+            print("Nenhum registro encontrado.\n")
+            return
+
+        # Colunas alinhadas com a tabela criada
+        colunas = ["concurso", "dtsorteio"] + [f"d{i}" for i in range(1, 7)]
+        df = pd.DataFrame(rows, columns=colunas)
+
+        # Apenas colunas d1..d6 para análise
+        resultado = {}
+        for col in [f"d{i}" for i in range(1, 7)]:
+            resultado[col] = sorted(df[col].tolist())
+
+        tabela = pd.DataFrame(resultado).astype(int)
+        tabela.insert(0, "dtsorteio", df["dtsorteio"].values)
+        tabela.insert(0, "concurso", df["concurso"].values)
+
+        print("\n--- RESULTADO ORDENADO POR COLUNA ---")
+        print(tabela)
+
+        # Ranking dos 3 mais repetidos por coluna em formato de tabela
+        ranking_final = {}
+        for col in [f"d{i}" for i in range(1, 7)]:
+            contagem = tabela[col].value_counts().head(3)
+            contagem.index = contagem.index.astype(int)
+            contagem = contagem.astype(int)
+            ranking_final[col] = contagem
+
+        ranking_df = pd.DataFrame(ranking_final).fillna("")
+
+        print("\n--- RANKING DOS 3 MAIS REPETIDOS POR COLUNA ---")
+        print(ranking_df)
+        print()
+        opcao = input("Deseja retornar ao menu inicial? (s/n) ").lower()
+        if opcao == "s":
+            limpar_tela()
+            break
+
+
+# Importa a planilha para o banco de dados
+def import_planilha():
+    limpar_tela()
+
+    def ler_excel_com_moedas_convertidas(caminho_arquivo, sheet_name=0):
+        # Lê o Excel
+        df = pd.read_excel(caminho_arquivo, sheet_name=sheet_name)
+
+        # Função auxiliar para detectar e converter valores monetários
+        def converter_moeda(valor):
+            if isinstance(valor, str) and 'R$' in valor:
+                valor = valor.replace('R$', '').replace('.', '').replace(',', '.')
+                try:
+                    return float(valor)
+                except ValueError:
+                    return None
+            return valor
+
+        # Aplica conversão apenas em colunas com strings contendo "R$"
+        for coluna in df.columns:
+            if df[coluna].dtype == object and df[coluna].astype(str).str.contains('R\\$').any():
+                df[coluna] = df[coluna].apply(converter_moeda)
+
+        return df
+
+    # Caminho do arquivo Excel
+    arquivo_excel = 'Mega-Sena.xlsx'
+
+    # Nome da aba (sheet) que você quer ler
+    nome_aba = 'MEGA SENA'  # ou use sheet_name=0 para a primeira aba
+
+    # Lê os dados da planilha
+    df = ler_excel_com_moedas_convertidas(arquivo_excel, nome_aba)
+
+    colunas_desejadas = ['Concurso', 'Data do Sorteio', 'Bola1', 'Bola2', 'Bola3', 'Bola4', 'Bola5', 'Bola6',
+                         'Ganhadores 6 acertos', 'Rateio 6 acertos']
+
+    df_filtrado = df[colunas_desejadas].copy()
+
+    # Renomeia colunas para bater com a tabela
+    df_filtrado.columns = [
+        'concurso', 'dtsorteio',
+        'd1', 'd2', 'd3', 'd4', 'd5',
+        'd6', 'qtganhador', 'rateio6'
+    ]
+
+    # Insere no banco (apenas novos ou atualiza existentes)
+    for _, row in df_filtrado.iterrows():
+        cursor.execute("""
+            INSERT OR REPLACE INTO conclt (
+                concurso, dtsorteio,
+                d1, d2, d3, d4, d5,
+                d6, qtganhador, rateio6
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
+        """, tuple(row))
+
+    conn.commit()
+    print("✅ Importação concluída! Dados novos foram inseridos/atualizados.\n")
+
+# Função para buscar ranking global e sugerir apostas + checar correspondência (Mega-Sena)
+def buscar_ranking_global():
+    limpar_tela()
+    qtd = int(input("Digite a quantidade de sorteios que deseja analisar: "))
+
+    # Buscar os últimos sorteios
+    cursor.execute(f"""
+        SELECT concurso, dtsorteio,
+               d1, d2, d3, d4, d5, d6
+        FROM conclt
+        ORDER BY concurso DESC
+        LIMIT {qtd}
+    """)
+    rows = cursor.fetchall()
+
+    if not rows:
+        print("Nenhum registro encontrado.\n")
+        return
+
+    # Criar DataFrame com apenas as dezenas
+    colunas = ["concurso", "dtsorteio"] + [f"d{i}" for i in range(1, 7)]
+    df = pd.DataFrame(rows, columns=colunas)
+
+    # Contagem global de todas as dezenas
+    todas_dezenas = df[[f"d{i}" for i in range(1, 7)]].values.flatten()
+    contagem = pd.Series(todas_dezenas).value_counts().sort_values(ascending=False)
+
+    print("\n--- RANKING GLOBAL DAS DEZENAS ---")
+    print(contagem)
+
+    # Sugestões de apostas
+    mais_frequentes = contagem.index.tolist()
+
+    aposta6 = sorted(mais_frequentes[:6])
+    aposta7 = sorted(mais_frequentes[:7])
+    aposta8 = sorted(mais_frequentes[:8])
+
+    menos_frequentes = contagem.index.tolist()[::-1]
+    aposta6_inversa = sorted(menos_frequentes[:6])
+
+    print("\n--- SUGESTÕES DE APOSTAS ---")
+    print(f"6 dezenas (mais frequentes): {aposta6}")
+    print(f"7 dezenas (mais frequentes): {aposta7}")
+    print(f"8 dezenas (mais frequentes): {aposta8}")
+    print(f"6 dezenas (menos frequentes): {aposta6_inversa}")
+
+    # 🔎 Verificar se a aposta de 6 dezenas já ocorreu em algum concurso
+    cursor.execute("""
+        SELECT concurso, dtsorteio,
+               d1, d2, d3, d4, d5, d6
+        FROM conclt
+    """)
+    todos_registros = cursor.fetchall()
+#git
+    for registro in todos_registros:
+        dezenas_registro = sorted(registro[2:8])  # pega d1..d6
+        if dezenas_registro == aposta6:
+            print("\n⚠️ Atenção: Essa combinação de 6 dezenas já ocorreu!")
+            print(f"Concurso: {registro[0]} | Data: {registro[1]}")
+            print(f"Dezenas: {dezenas_registro}")
+            break
+    else:
+        print("\n✅ Nenhum concurso anterior teve exatamente essa combinação de 6 dezenas.")
+
+    input("\nPressione ENTER para retornar ao menu...")
+    limpar_tela()
+
+
+# Menu principal
+def menu():
+    limpar_tela()
+    while True:
+        print("=== MENU PRINCIPAL ===")
+        print("1 - Inserir registros")
+        print("2 - Listar registros")
+        print("3 - Buscar registros ordenados + ranking")
+        print("4 - Importar registros do Excel")
+        print("5 - Ranking global + sugestões de apostas")  # <-- NOVO
+
+        print("0 - Sair")
+        opcao = input("Escolha uma opção: ")
+
+        if opcao == "1":
+            inserir_registros()
+        elif opcao == "2":
+            #menu_consulta()
+            listar_registros()
+        elif opcao == "3":
+            buscar_registros()
+        elif opcao == "4":
+            import_planilha()
+        elif opcao == "5":
+            buscar_ranking_global()  # <-- NOVO
+
+        elif opcao == "0":
+            print("Saindo...")
+            conn.close()
+            limpar_tela()
+            break
+        else:
+            print("Opção inválida!\n")
+
+
+# Executar menu
+menu()
